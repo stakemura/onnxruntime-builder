@@ -1,168 +1,146 @@
-name: Build C++ Shared Library
+name: Build minimal ONNX Runtime
 
 on:
-  push:
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       version:
-        description: "バージョン情報（A.BB.C / A.BB.C-preview.D）"
+        description: "Semantic version (e.g., 1.18.1)"
         required: true
-      target:
-        description: "ビルド対象"
-        type: choice
-        default: onnxruntime
-        options:
-          - onnxruntime
-          - voicevox_onnxruntime
-      release:
-        description: "リリースするかどうか"
-        type: boolean
-      code_signing:
-        description: "コード署名する"
-        type: boolean
+      repository:
+        description: "Name of a target repository"
+        default: 'microsoft/onnxruntime'
         required: false
-        default: false
 
 env:
-  TARGET_LIBRARY:
-    |-
-    ${{ inputs.target || 'onnxruntime' }}
+  ORT_PYTHON_VERSION: '3.10'
+  TARGET_LIBRARY: 'onnxruntime'
   ONNXRUNTIME_VERSION:
-    |- # workflow_dispatchでのバージョン名が入る。無指定なら適当なバージョン
-    ${{ inputs.version || '1.17.3' }}
-  RELEASE:
-    |- # workflow_dispatchでのreleaseフラグがあればリリースする
-    ${{ inputs.release }}
+    |- # Enter release tag name or version in workflow_dispatch. Recent version if not specified
+    ${{ github.event.release.tag_name || github.event.inputs.version || '1.18.1' }}
+  REPOSITORY:
+    ${{ github.event.inputs.repository || 'microsoft/onnxruntime' }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  build-onnxruntime:
+  build:
     strategy:
       fail-fast: false
       matrix:
-        # TODO: 外せる`--compile_no_warning_as_error`は外す
         include:
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-win-x64
+          - artifact_name: onnxruntime-win-x64-minimal
             os: windows-2022
             build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
+              --enable_msvc_static_runtime
               --cmake_extra_defines
               CMAKE_SYSTEM_NAME=Windows
               CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
             result_dir: build/Release
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-win-x64-dml
+          - artifact_name: onnxruntime-win-x86-minimal
             os: windows-2022
             build_opts: |-
-              --compile_no_warning_as_error
-              --use_dml
-              --cmake_extra_defines
-              CMAKE_SYSTEM_NAME=Windows
-              CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
-            result_dir: build/Release
-            release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-win-x64-cuda
-            os: windows-2022
-            cuda_version: 12.4.1
-            # Windowsの場合デフォルトのパッケージ群では不十分であるため、必要そうなパッケージを指定する。ただしいくつかは不要かもしれない
-            cuda_sub_packages: '["cudart", "cuobjdump", "nvcc", "nvdisasm", "thrust", "cublas_dev", "cufft_dev", "curand_dev", "cusolver_dev", "cusparse_dev", "visual_studio_integration"]'
-            cudnn_url: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-8.9.7.29_cuda12-archive.zip
-            build_opts: |-
-              --compile_no_warning_as_error
-              --use_cuda
-              --cuda_version 12.4 # WindowsではCUDAのディレクトリを見つけ出すのに必要（1.16.3時点）
-              --cmake_extra_defines
-              CMAKE_SYSTEM_NAME=Windows
-              CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
-            result_dir: build/Release
-            release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-win-x86
-            os: windows-2022
-            build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
+              --enable_msvc_static_runtime
               --x86
               --cmake_extra_defines
               CMAKE_SYSTEM_NAME=Windows
               CMAKE_SYSTEM_PROCESSOR=x86 # required for `cpuinfo`
             result_dir: build/Release
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-linux-x64
+          - artifact_name: onnxruntime-linux-x64-minimal
             os: ubuntu-20.04
+            cmake_arch: linux-x86_64
             build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
               --cmake_extra_defines
               CMAKE_SYSTEM_NAME=Linux
               CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
             result_dir: build
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-linux-x64-cuda
-            os: ubuntu-20.04
-            cuda_version: 12.4.1
-            cuda_sub_packages: "[]" # デフォルト
-            cudnn_url: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-x86_64/cudnn-linux-x86_64-8.9.7.29_cuda12-archive.tar.xz
+          # - artifact_name: onnxruntime-linux-armhf-minimal
+          #   os: ubuntu-22.04-arm
+          #   cmake_arch: linux-aarch64
+          #   build_opts: |-
+          #     --minimal_build
+          #     --disable_ml_ops
+          #     --enable_reduced_operator_type_support
+          #     --arm
+          #     --cmake_extra_defines
+          #     CMAKE_SYSTEM_NAME=Linux
+          #     CMAKE_SYSTEM_PROCESSOR=armv7l # required for `cpuinfo`
+          #   result_dir: build
+          #   release_config: Release
+          - artifact_name: onnxruntime-linux-arm64-minimal
+            os: ubuntu-22.04-arm
+            cmake_arch: linux-aarch64
             build_opts: |-
-              --compile_no_warning_as_error
-              --use_cuda
-              --cmake_extra_defines
-              CMAKE_SYSTEM_NAME=Linux
-              CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
-            result_dir: build
-            release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-linux-armhf
-            os: ubuntu-20.04
-            cc_version: "10"
-            cxx_version: "10"
-            linux_cross_arch: arm-linux-gnueabihf
-            symlink_workaround: true
-            build_opts: |-
-              --compile_no_warning_as_error
-              --arm
-              --cmake_extra_defines
-              CMAKE_SYSTEM_NAME=Linux
-              CMAKE_SYSTEM_PROCESSOR=armv7l # required for `cpuinfo`
-            result_dir: build
-            release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-linux-arm64
-            os: ubuntu-20.04
-            cc_version: "10"
-            cxx_version: "10"
-            linux_cross_arch: aarch64-linux-gnu
-            symlink_workaround: true
-            build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
               --arm64
               --cmake_extra_defines
               CMAKE_SYSTEM_NAME=Linux
               CMAKE_SYSTEM_PROCESSOR=aarch64 # required for `cpuinfo`
             result_dir: build
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-osx-arm64
+          - artifact_name: onnxruntime-osx-arm64-minimal
             os: macos-13
             build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
               --cmake_extra_defines
               CMAKE_SYSTEM_NAME=Darwin
               CMAKE_OSX_ARCHITECTURES=arm64
-              CMAKE_SYSTEM_PROCESSOR=arm64 # required for `cpuinfo`
+              CMAKE_SYSTEM_PROCESSOR=aarch64 # required for `cpuinfo`
             result_dir: build
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-osx-x86_64
+          - artifact_name: onnxruntime-osx-x86_64-minimal
             os: macos-13
             build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
               --cmake_extra_defines
               CMAKE_SYSTEM_NAME=Darwin
               CMAKE_OSX_ARCHITECTURES=x86_64
               CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
             result_dir: build
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-android-x64
-            os: ubuntu-20.04
+          - artifact_name: onnxruntime-osx-universal2-minimal
+            os: macos-13
             build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build
+              --disable_ml_ops
+              --enable_reduced_operator_type_support
+              --cmake_extra_defines
+              CMAKE_SYSTEM_NAME=Darwin
+              CMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+            result_dir: build
+            release_config: Release
+          - artifact_name: onnxruntime-android-x86_64-minimal
+            os: ubuntu-22.04
+            cmake_arch: linux-x86_64
+            build_opts: |-
+              --minimal_build=extended
+              --use_nnapi
+              --disable_ml_ops
+              --disable_exceptions
+              --disable_rtti
+              --enable_reduced_operator_type_support
               --android
               --android_abi x86_64
               --cmake_extra_defines
@@ -170,10 +148,16 @@ jobs:
               CMAKE_SYSTEM_PROCESSOR=x86_64 # required for `cpuinfo`
             result_dir: build
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-android-arm64
-            os: ubuntu-20.04
+          - artifact_name: onnxruntime-android-arm64-minimal
+            os: ubuntu-22.04
+            cmake_arch: linux-x86_64
             build_opts: |-
-              --compile_no_warning_as_error
+              --minimal_build=extended
+              --use_nnapi
+              --disable_ml_ops
+              --disable_exceptions
+              --disable_rtti
+              --enable_reduced_operator_type_support
               --android
               --android_abi arm64-v8a
               --cmake_extra_defines
@@ -181,251 +165,48 @@ jobs:
               CMAKE_SYSTEM_PROCESSOR=aarch64 # required for `cpuinfo`
             result_dir: build
             release_config: Release
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-ios-arm64
-            os: macos-13
-            build_opts: |-
-              --compile_no_warning_as_error
-              --skip_tests
-              --use_xcode
-              --ios
-              --apple_sysroot iphoneos
-              --osx_arch arm64
-              --apple_deploy_target 16.0
-              --path_to_protoc_exe /usr/local/opt/protobuf@21/bin/protoc # Homebrewで入れた`protobuf@21`
-            result_dir: build/Release
-            release_config: Release-iphoneos
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-ios-sim-arm64
-            os: macos-13
-            build_opts: |-
-              --compile_no_warning_as_error
-              --skip_tests
-              --use_xcode
-              --ios
-              --apple_sysroot iphonesimulator
-              --osx_arch arm64
-              --apple_deploy_target 16.0
-              --path_to_protoc_exe /usr/local/opt/protobuf@21/bin/protoc # Homebrewで入れた`protobuf@21`
-            result_dir: build/Release
-            release_config: Release-iphonesimulator
-          - artifact_name: ${{ inputs.target || 'onnxruntime' }}-ios-sim-x86_64
-            os: macos-13
-            build_opts: |-
-              --compile_no_warning_as_error
-              --skip_tests
-              --use_xcode
-              --ios
-              --apple_sysroot iphonesimulator
-              --osx_arch x86_64
-              --apple_deploy_target 16.0
-              --path_to_protoc_exe /usr/local/opt/protobuf@21/bin/protoc # Homebrewで入れた`protobuf@21`
-            result_dir: build/Release
-            release_config: Release-iphonesimulator
-
-    env:
-      # prefix usage: "", "arm-linux-gnueabihf-" => "gcc-8", "arm-linux-gnueabihf-gcc-8" (command name)
-      # suffix usage: "", "-arm-linux-gnueabihf" => "gcc-8", "gcc-8-arm-linux-gnueabihf" (package name)
-      ARCH_PREFIX: "${{ (matrix.linux_cross_arch != '' && matrix.linux_cross_arch) || '' }}${{ (matrix.linux_cross_arch != '' && '-') || '' }}"
-      ARCH_SUFFIX: "${{ (matrix.linux_cross_arch != '' && '-') || '' }}${{ (matrix.linux_cross_arch != '' && matrix.linux_cross_arch) || '' }}"
 
     runs-on: ${{ matrix.os }}
-    environment: ${{ inputs.target == 'voicevox_onnxruntime' && 'production' || '' }}
 
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: "3.10"
-
-      - name: Version check (semver)
-        run: |
-          VERSION=$ONNXRUNTIME_VERSION
-          if [[ $VERSION =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]; then
-            echo "Version: $VERSION"
-          else
-            echo "$VERSION is not a valid semver."
-            exit 1
-          fi
-
-      - name: Dump matrix context
-        env:
-          MATRIX_CONTEXT: ${{ toJSON(matrix) }}
-        run: echo "$MATRIX_CONTEXT" > matrix.json
-
-      - name: Cache build result
-        id: cache-build-result
-        if: env.TARGET_LIBRARY == 'onnxruntime'
-        uses: actions/cache@v4
-        with:
-          path: build/
-          key: ${{ matrix.artifact_name }}-v${{ env.ONNXRUNTIME_VERSION }}-cache-${{ hashFiles('matrix.json') }}
-
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@main
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && runner.os == 'Linux' && contains(matrix.build_opts, '--use_cuda')
-        with:
-          tool-cache: false
-          large-packages: false
-          swap-storage: false
-
-      - name: Install tree
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          install: tree
-
-      - name: Install tree for debug
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && runner.os == 'macOS'
-        run: brew install tree
-
-      - name: Install build dependencies on ubuntu
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && startsWith(matrix.os, 'ubuntu') && matrix.linux_cross_arch
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-              build-essential \
-              git \
-              wget \
-              qemu-user-binfmt \
-              gcc-${{ matrix.cc_version }}"$ARCH_SUFFIX" \
-              g++-${{ matrix.cxx_version }}"$ARCH_SUFFIX"
-
-      - name: Install build dependencies on macos
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && startsWith(matrix.os, 'macos')
-        run: |
-          # Workaround for protoc https://github.com/microsoft/onnxruntime/issues/16238#issuecomment-1590398821
-          brew install protobuf@21
-
-      # ONNX Runtime v1.16.1 requires CMake 3.27 or higher.
-      - name: Install CMake
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && startsWith(matrix.os, 'ubuntu')
-        env:
-          CMAKE_VERSION: 3.27.7
-        run: |
-          wget -O cmake.sh "https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.sh"
-          sudo bash cmake.sh --skip-license --prefix=/usr/local
-
-      - name: Set up CUDA
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && matrix.cuda_version && matrix.cudnn_url
-        uses: Jimver/cuda-toolkit@v0.2.16
-        with:
-          cuda: ${{ matrix.cuda_version }}
-          sub-packages: ${{ matrix.cuda_sub_packages }}
-          method: network
-
-      - name: Set `$CUDA_HOME`
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && matrix.cuda_version && matrix.cudnn_url
-        run: echo "CUDA_HOME=$CUDA_PATH" >> "$GITHUB_ENV"
-
-      - name: Set up cuDNN
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && matrix.cuda_version && matrix.cudnn_url
-        run: |
-          download_dir=$RUNNER_TEMP/cudnn
-          mkdir "$download_dir"
-
-          if [ ${{ runner.os }} = Windows ]; then
-            curl -L "${{ matrix.cudnn_url }}" > "$download_dir/cudnn.zip"
-            unzip "$download_dir/cudnn.zip" -d "$download_dir"
-            rm "$download_dir/cudnn.zip"
-          else
-            curl -L "${{ matrix.cudnn_url }}" > "$download_dir/cudnn.tar.gz"
-            tar xvf "$download_dir/cudnn.tar.gz" -C "$download_dir/"
-            rm "$download_dir/cudnn.tar.gz"
-          fi
-
-          cudnn_path=$(find "$download_dir" -maxdepth 1 -name 'cudnn-*')
-          if [ ${{ runner.os }} = Windows ]; then
-            cudnn_path=$(cygpath -wa "$cudnn_path")
-          else
-            cudnn_path=$(realpath "$cudnn_path")
-          fi
-
-          echo "CUDNN_HOME=$cudnn_path" >> "$GITHUB_ENV"
-
-      - name: Configure to use latest Android NDK
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && startsWith(matrix.os, 'ubuntu') && contains(matrix.build_opts, '--android')
-        run: |
-          # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2004-Readme.md#environment-variables-2
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-
-      # workaround for https://github.com/actions/checkout/issues/1201
-      - name: Stash build directory
-        if: steps.cache-build-result.outputs.cache-hit == 'true'
-        run: mv ./build "$RUNNER_TEMP/"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        if: env.TARGET_LIBRARY == 'onnxruntime'
-        with:
-          repository: microsoft/onnxruntime
-          submodules: true
+          repository: ${{ env.REPOSITORY }}
           ref: v${{ env.ONNXRUNTIME_VERSION }}
-
-      - name: Restore the stashed build directory
-        if: steps.cache-build-result.outputs.cache-hit == 'true'
-        run: mv "$RUNNER_TEMP/build" .
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        if: env.TARGET_LIBRARY == 'voicevox_onnxruntime'
-        with:
-          repository: microsoft/onnxruntime
-          submodules: true
-          ref: v${{ env.ONNXRUNTIME_VERSION }}
-          token: ${{ secrets.PRODUCTION_GITHUB_TOKEN }}
-
-      - name: Switch to production
-        id: switch-to-production
-        if: env.TARGET_LIBRARY == 'voicevox_onnxruntime'
-        run: |
-          (
-            git remote add private "$PRODUCTION_REPOSITORY_URL"
-            git fetch private "refs/tags/v$ONNXRUNTIME_VERSION-voicevox"
-            git switch -d FETCH_HEAD
-          ) 1>>${{ matrix.artifact_name }}_stdout.txt 2>>${{ matrix.artifact_name }}_stderr.txt
-        env:
-          PRODUCTION_REPOSITORY_URL: ${{ secrets.PRODUCTION_REPOSITORY_URL }}
+          submodules: recursive
+          github-server-url: https://github.com
 
       - name: Checkout builder
         uses: actions/checkout@v4
         with:
           path: builder
 
-      - name: Apply patch
+      - uses: actions/setup-python@v5
+        with: 
+          python-version: ${{ env.ORT_PYTHON_VERSION }}
+
+      - name: Install build dependencies on macos
+        if: startsWith(matrix.os, 'macos')
         run: |
-          git apply --ignore-whitespace --reject --whitespace=fix --verbose ./builder/1_17_3_android_arm64_build.patch
+          pip install --no-cache-dir flatbuffers
 
-      - name: Configure build environment for non-x86_64 Linux
-        if: steps.cache-build-result.outputs.cache-hit != 'true' && startsWith(matrix.os, 'ubuntu') && matrix.linux_cross_arch
+      # ONNX Runtime v1.16.1 requires CMake 3.27 or higher.
+      - name: Install CMake
+        if: startsWith(matrix.os, 'ubuntu')
+        env:
+          CMAKE_VERSION: 3.27.7
         run: |
-          # Required for arm build
-          # https://github.com/microsoft/onnxruntime/issues/4189#issuecomment-642528278
-          echo 'string(APPEND CMAKE_C_FLAGS " -latomic")' >> cmake/CMakeLists.txt
-          echo 'string(APPEND CMAKE_CXX_FLAGS " -latomic")' >> cmake/CMakeLists.txt
+          wget -O cmake.sh "https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-${{ matrix.cmake_arch }}.sh"
+          sudo bash cmake.sh --skip-license --prefix=/usr/local
 
-          # Prevent Exec Format Error during cross-compiling
-          if ${{ matrix.symlink_workaround }}; then
-            find /usr/${{ matrix.linux_cross_arch }}/lib -name '*.so*' -exec sudo ln -s {} /usr/lib/${{ matrix.linux_cross_arch }}/ ';'
-            sudo ln -s /usr/${{ matrix.linux_cross_arch }}/lib/ld-linux-*.so* /usr/lib/
-          fi
-
-          # Set environment variable CC / CXX
-          echo CC="$ARCH_PREFIX"gcc-${{ matrix.cc_version }} >> "$GITHUB_ENV"
-          echo CXX="$ARCH_PREFIX"g++-${{ matrix.cxx_version }} >> "$GITHUB_ENV"
-
-      - name: Run prepare.bash
-        id: prepare
-        if: env.TARGET_LIBRARY == 'voicevox_onnxruntime'
-        run: ./prepare.bash 1>>${{ matrix.artifact_name }}_stdout.txt 2>>${{ matrix.artifact_name }}_stderr.txt
+      - name: Configure to use latest Android NDK
+        if: startsWith(matrix.os, 'ubuntu') && startsWith(matrix.artifact_name, 'onnxruntime-android')
+        run: |
+          # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2004-Readme.md#environment-variables-2
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
       - name: Build ONNX Runtime
-        id: build
-        if: steps.cache-build-result.outputs.cache-hit != 'true'
         run: |
-          # TODO: ↓ この記述は VOICEVOX/voicevox_core#41 時点でのarmhfビルドに対するもの。`CMAKE_SYSTEM_{NAME,PROCESSOR}`が必要のないケースが多いはず。例えばv1.17時点では、AndroidとiOSのビルドではcpuinfoのケアまでちゃんとされているはず。なので調べる。
-          # add --arm for gcc-8: https://github.com/microsoft/onnxruntime/issues/4189
-          # skip test: https://github.com/microsoft/onnxruntime/issues/2436
-          # ONNX Runtime v1.9.0 requires CMAKE_SYSTEM_PROCESSOR, https://github.com/microsoft/onnxruntime/releases/tag/v1.9.0
-          # Both CMAKE_SYSTEM_NAME and CMAKE_SYSTEM_PROCESSOR are required.
-
           build_opts=(
           ${{ matrix.build_opts }}
           )
@@ -437,58 +218,12 @@ jobs:
             --build \
             --parallel \
             --build_shared_lib \
-            "${build_opts[@]}" \
-            1${{ env.TARGET_LIBRARY == 'onnxruntime' && '>&1' || format('>> {0}_stdout.txt', matrix.artifact_name) }} \
-            2${{ env.TARGET_LIBRARY == 'onnxruntime' && '>&2' || format('>> {0}_stderr.txt', matrix.artifact_name) }}
-
-      - name: Inspect the build directory for debug
-        id: inspect-build-dir
-        if: steps.cache-build-result.outputs.cache-hit != 'true'
-        run: |
-          if [ ${{ runner.os }} = Windows ]; then
-            tree() {
-              msys2.cmd -c "tree $1"
-            }
-          fi
-          tree build \
-            1${{ env.TARGET_LIBRARY == 'onnxruntime' && '>&1' || format('>> {0}_stdout.txt', matrix.artifact_name) }} \
-            2${{ env.TARGET_LIBRARY == 'onnxruntime' && '>&2' || format('>> {0}_stderr.txt', matrix.artifact_name) }}
-
-      - name: Encrypt log
-        if: |
-          failure()
-          && (
-            steps.switch-to-production.outcome == 'failure'
-            || steps.prepare.outcome == 'failure'
-            || steps.build.outcome == 'failure'
-            || steps.inspect-build-dir.outcome == 'failure'
-          )
-          && env.TARGET_LIBRARY == 'voicevox_onnxruntime'
-        run: |
-          for file in ./${{ matrix.artifact_name }}_{stdout,stderr}.txt; do
-            gpg -ef ./builder/log-encryption-pub.asc "$file"
-          done
-
-      - name: Upload the encrypted log
-        if: |
-          failure()
-          && (
-            steps.switch-to-production.outcome == 'failure'
-            || steps.prepare.outcome == 'failure'
-            || steps.build.outcome == 'failure'
-            || steps.inspect-build-dir.outcome == 'failure'
-          )
-          && env.TARGET_LIBRARY == 'voicevox_onnxruntime'
-        uses: actions/upload-artifact@v4
-        with:
-          name: log_${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}_*.txt.gpg
+            --compile_no_warning_as_error \
+            --skip_tests \
+            "${build_opts[@]}"
 
       - name: Organize artifact
         run: |
-          # コピー先artifactを予め削除しておく
-          rm -rf ${{ matrix.result_dir }}/${{ matrix.artifact_name }}
-          rm -rf ./artifact
           # Set library name
           ARTIFACT_NAME=${{ matrix.artifact_name }}
           if [[ "$ARTIFACT_NAME" == "$TARGET_LIBRARY"-win-* ]]; then
@@ -527,268 +262,90 @@ jobs:
               -t "$(git rev-parse HEAD)"
             rm -r ${{ matrix.result_dir }}/${{ matrix.artifact_name }}/{Privacy.md,include}
           fi
-          if [ "$TARGET_LIBRARY" = voicevox_onnxruntime ]; then
-            mv ${{ matrix.result_dir }}/${{ matrix.artifact_name }}/{,ORT_}LICENSE
-            mv ${{ matrix.result_dir }}/${{ matrix.artifact_name }}/{,ORT_}README.md
-            mv ${{ matrix.result_dir }}/${{ matrix.artifact_name }}/{,Ort}ThirdPartyNotices.txt
-            mv ./VOICEVOX_LICENSE.md ${{ matrix.result_dir }}/${{ matrix.artifact_name }}/LICENSE.md
-            mv ./build/third-party-notices.html ./${{ matrix.result_dir }}/${{ matrix.artifact_name }}
-          fi
-          mv ${{ matrix.result_dir }}/${{ matrix.artifact_name }} ./artifact/
-
-      - name: Code signing (Windows)
-        if: runner.os == 'Windows' && inputs.code_signing
-        run: find ./${{ matrix.result_dir }}/${{ matrix.artifact_name }}/lib -name '*.dll' -exec ./builder/codesign.bash {} ';'
-        env:
-          ESIGNERCKA_USERNAME: ${{ secrets.ESIGNERCKA_USERNAME }}
-          ESIGNERCKA_PASSWORD: ${{ secrets.ESIGNERCKA_PASSWORD }}
-          ESIGNERCKA_TOTP_SECRET: ${{ secrets.ESIGNERCKA_TOTP_SECRET }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: artifact/*
-
-      - name: Generate RELEASE_NAME
-        run: |
-          echo RELEASE_NAME=${{ matrix.artifact_name }}-"$ONNXRUNTIME_VERSION" >> "$GITHUB_ENV"
-
-      - name: Generate specifications
-        run: |
-          build_opts=(
-          ${{ matrix.build_opts }}
-          )
-
-          for arg in "${build_opts[@]}"; do
-            case "$arg" in
-              CMAKE_SYSTEM_NAME=Windows) os=Windows ;;
-              CMAKE_SYSTEM_NAME=Linux) os=Linux ;;
-              CMAKE_SYSTEM_NAME=Darwin) os=macOS ;;
-              --android) os=Android ;;
-              --ios) os=iOS ;;
-
-              CMAKE_SYSTEM_PROCESSOR=x86_64 | CMAKE_OSX_ARCHITECTURES=x86_64 | x86_64) arch=x86_64 ;;
-              --x86) arch=x86 ;;
-              CMAKE_OSX_ARCHITECTURES=arm64 | --arm64 | arm64 | arm64-v8a) arch=AArch64 ;;
-              --arm) arch=ARMv7 ;;
-
-              --use_cuda) use_cuda=1 ;;
-              --use_dml) use_dml=1 ;;
-            esac
-          done
-
-          jq '
-            {
-              "os": $os,
-              "arch": $arch,
-              # ONNX Runtimeが示す順番に従う
-              "devices": [
-                ("CUDA" | select($use_cuda == "1")),
-                ("DirectML" | select($use_dml == "1")),
-                "CPU"
-              ] | join("/")
-            }' \
-            -n \
-            --arg os "$os" \
-            --arg arch "$arch" \
-            --arg use_cuda "$use_cuda" \
-            --arg use_dml "$use_dml" \
-            > "$RELEASE_NAME.json"
-
-      - name: Upload specifications
-        uses: actions/upload-artifact@v4
-        with:
-          name: specs-${{ matrix.artifact_name }}
-          path: ${{ env.RELEASE_NAME }}.json
-
-      - name: Rearchive artifact
-        if: env.RELEASE == 'true'
-        run: |
-          mv artifact/ "$RELEASE_NAME"
-          tar cfz "$RELEASE_NAME.tgz" "$RELEASE_NAME/"
+          mv ${{ matrix.result_dir }}/${{ matrix.artifact_name }} "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION"
+          tar cfz "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION.tgz" "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION/"
 
       - name: Upload to Release
-        if: env.RELEASE == 'true'
         uses: svenstaro/upload-release-action@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ env.TARGET_LIBRARY }}-${{ env.ONNXRUNTIME_VERSION }}
-          file: ${{ env.RELEASE_NAME }}.tgz
-          prerelease: true
+          file: "*.tgz"
+          tag: ${{ env.ONNXRUNTIME_VERSION }}
+          overwrite: true
+          file_glob: true
+
+  build-aar:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_name: onnxruntime-android-aar-minimal
+            os: ubuntu-22.04
+            build_settings: tools/ci_build/github/android/default_mobile_aar_build_settings.json
+            build_variant: mobile
+            release_config: Release
+          
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REPOSITORY }}
+          ref: v${{ env.ONNXRUNTIME_VERSION }}
+          submodules: recursive
+          github-server-url: https://github.com
+        
+      - name: Build ONNX Runtime
+        run: |
+          python tools/android_custom_build/build_custom_android_package.py --build_settings ${{ matrix.build_settings }} --config ${{ matrix.release_config }} --onnxruntime_branch_or_tag "v$ONNXRUNTIME_VERSION" ./build
+          mv "./build/output/aar_out/Release/com/microsoft/onnxruntime/onnxruntime-${{ matrix.build_variant }}/$ONNXRUNTIME_VERSION/" "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION"
+          tar cfz "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION.tgz" "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION/"
+
+      - name: Upload to Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: "*.tgz"
+          tag: ${{ env.ONNXRUNTIME_VERSION }}
+          overwrite: true
+          file_glob: true
 
   build-xcframework:
-    needs: build-onnxruntime
-    runs-on: macos-13
-    outputs:
-      release-name: ${{ steps.gen-envs.outputs.release-name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_name: onnxruntime-ios-xcframework-minimal
+            os: macos-13
+            build_settings: tools/ci_build/github/apple/default_mobile_ios_framework_build_settings.json
+            release_config: MinSizeRel
+          
+    runs-on: ${{ matrix.os }}
+
     steps:
-      - name: Generate RELEASE_NAME and ONNXRUNTIME_BASENAME
-        id: gen-envs
-        run: |
-          RELEASE_NAME=$TARGET_LIBRARY-ios-xcframework-$ONNXRUNTIME_VERSION
-          echo "release-name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
-          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_ENV"
-          echo "ONNXRUNTIME_BASENAME=lib$TARGET_LIBRARY.$ONNXRUNTIME_VERSION.dylib" >> "$GITHUB_ENV"
-
       - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.TARGET_LIBRARY }}-ios-arm64
-          path: artifact/${{ env.TARGET_LIBRARY }}-aarch64-apple-ios
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.TARGET_LIBRARY }}-ios-sim-arm64
-          path: artifact/${{ env.TARGET_LIBRARY }}-aarch64-apple-ios-sim
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.TARGET_LIBRARY }}-ios-sim-x86_64
-          path: artifact/${{ env.TARGET_LIBRARY }}-x86_64-apple-ios
-
-      - name: Remove no version notation dylib
+          repository: ${{ env.REPOSITORY }}
+          ref: v${{ env.ONNXRUNTIME_VERSION }}
+          submodules: recursive
+          github-server-url: https://github.com
+        
+      - uses: actions/setup-python@v5
+        with: 
+          python-version: ${{ env.ORT_PYTHON_VERSION }}
+      
+      - name: Install build dependencies on macos
         run: |
-          rm -f artifact/"$TARGET_LIBRARY"-x86_64-apple-ios/lib/*"$TARGET_LIBRARY".dylib
-          rm -f artifact/"$TARGET_LIBRARY"-aarch64-apple-ios-sim/lib/*"$TARGET_LIBRARY".dylib
-          rm -f artifact/"$TARGET_LIBRARY"-aarch64-apple-ios/lib/*"$TARGET_LIBRARY".dylib
+          pip install --no-cache-dir flatbuffers
 
-      - name: '"onnxruntime" → "voicevox_onnxruntime"'
-        if: env.TARGET_LIBRARY == 'voicevox_onnxruntime'
+      - name: Build ONNX Runtime
         run: |
-          for arch in aarch64 sim; do
-            mv xcframework/Frameworks/$arch/{,voicevox_}onnxruntime.framework
-          done
-          find ./xcframework -type f -exec sed -i '' s/onnxruntime/voicevox_onnxruntime/ {} +
-
-      - name: Create aarch64 Framework
-        run: |
-          mkdir -p "Framework-aarch64"
-          cp -vr xcframework/Frameworks/aarch64/ Framework-aarch64/
-
-          lipo -create "artifact/$TARGET_LIBRARY-aarch64-apple-ios/lib/$ONNXRUNTIME_BASENAME" \
-            -output "Framework-aarch64/$TARGET_LIBRARY.framework/$TARGET_LIBRARY"
-
-      - name: Change aarch64 @rpath
-        run: |
-          install_name_tool -id "@rpath/$TARGET_LIBRARY.framework/$TARGET_LIBRARY" \
-            "Framework-aarch64/$TARGET_LIBRARY.framework/$TARGET_LIBRARY"
-
-      - name: Create fat binary
-        run: |
-          mkdir -p "artifact/$TARGET_LIBRARY-sim"
-          lipo -create "artifact/$TARGET_LIBRARY-x86_64-apple-ios/lib/$ONNXRUNTIME_BASENAME" \
-            "artifact/$TARGET_LIBRARY-aarch64-apple-ios-sim/lib/$ONNXRUNTIME_BASENAME" \
-            -output "artifact/$TARGET_LIBRARY-sim/$TARGET_LIBRARY"
-
-      - name: Create sim Framework
-        run: |
-          mkdir -p "Framework-sim"
-          cp -vr xcframework/Frameworks/sim/ Framework-sim/
-          cp -v "artifact/$TARGET_LIBRARY-sim/$TARGET_LIBRARY" \
-            "Framework-sim/$TARGET_LIBRARY.framework/$TARGET_LIBRARY"
-
-      - name: Change sim @rpath
-        run: |
-          install_name_tool -id "@rpath/$TARGET_LIBRARY.framework/$TARGET_LIBRARY" \
-            "Framework-sim/$TARGET_LIBRARY.framework/$TARGET_LIBRARY"
-
-      - name: Create XCFramework
-        run: |
-          mkdir -p "artifact/$ONNXRUNTIME_BASENAME"
-          xcodebuild -create-xcframework \
-            -framework "Framework-sim/$TARGET_LIBRARY.framework" \
-            -framework "Framework-aarch64/$TARGET_LIBRARY.framework" \
-            -output "artifact/$ONNXRUNTIME_BASENAME/$TARGET_LIBRARY.xcframework"
-
-      - name: Archive artifact
-        run: |
-          cd "artifact/$ONNXRUNTIME_BASENAME"
-          7z a "../../$RELEASE_NAME.zip" "$TARGET_LIBRARY.xcframework"
-
+          python tools/ci_build/github/apple/build_apple_framework.py ${{ matrix.build_settings }} --config ${{ matrix.release_config }}
+          mv build/apple_framework/framework_out/ "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION"
+          7z a "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION.zip" "${{ matrix.artifact_name }}-$ONNXRUNTIME_VERSION"          
+  
       - name: Upload to Release
-        if: env.RELEASE == 'true'
         uses: svenstaro/upload-release-action@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ env.TARGET_LIBRARY }}-${{ env.ONNXRUNTIME_VERSION }}
-          file: ${{ env.RELEASE_NAME }}.zip
-          prerelease: true
-
-  build-spec-table:
-    needs: [build-onnxruntime, build-xcframework]
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Download specifications
-        uses: actions/download-artifact@v4
-        with:
-          path: specs
-          pattern: specs-*
-          merge-multiple: true
-
-      - name: Construct release notes
-        run: |
-          release_notes=$(
-            cat <<EOF
-          ## 動的ライブラリ
-
-          <table data-voicevox-onnxruntime-specs-format-version="1" data-voicevox-onnxruntime-specs-type="dylibs">
-            <thead>
-              <tr>
-                <th>OS</th>
-                <th>ｱｰｷﾃｸﾁｬ</th>
-                <th>デバイス</th>
-                <th>名前</th>
-              </tr>
-            </thead>
-            <tbody>
-          EOF
-          )
-          release_notes+=$'\n'
-          for specs_file in specs/*.json; do
-            specs=$(< "$specs_file")
-            release_name=$(basename "${specs_file%.json}")
-            release_notes+=$'    <tr>\n'
-            release_notes+="      <td>$(jq .os -r <<< "$specs")</td>"$'\n'
-            release_notes+="      <td>$(jq .arch -r <<< "$specs")</td>"$'\n'
-            release_notes+="      <td>$(jq .devices -r <<< "$specs")</td>"$'\n'
-            release_notes+="      <td><a href=\"https://github.com/$GITHUB_REPOSITORY/releases/download/$TARGET_LIBRARY-$ONNXRUNTIME_VERSION/$release_name.tgz\">$release_name.tgz</a></td>"$'\n'
-            release_notes+=$'    </tr>\n'
-          done
-          release_notes+=$(
-            cat <<EOF
-            </tbody>
-          </table>
-
-          ## XCFramework
-
-          <table data-voicevox-onnxruntime-specs-format-version="1" data-voicevox-onnxruntime-specs-type="xcframeworks">
-            <thead>
-              <tr>
-                <th>OS</th>
-                <th>ｱｰｷﾃｸﾁｬ</th>
-                <th>デバイス</th>
-                <th>名前</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>iOS</td>
-                <td>AArch64/x86_64</td>
-                <td>CPU</td>
-                <td><a href="https://github.com/$GITHUB_REPOSITORY/releases/download/$TARGET_LIBRARY-$ONNXRUNTIME_VERSION/${{ needs.build-xcframework.outputs.release-name }}.zip">${{ needs.build-xcframework.outputs.release-name }}.zip</a></td>
-              </tr>
-            </tbody>
-          </table>
-          EOF
-          )
-          tee release-notes.md >&2 <<< "$release_notes"
-
-      - name: Update release notes
-        if: env.RELEASE == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: release-notes.md
-          prerelease: true
-          tag_name: ${{ env.TARGET_LIBRARY }}-${{ env.ONNXRUNTIME_VERSION }}
+          file: "*.zip"
+          tag: ${{ env.ONNXRUNTIME_VERSION }}
+          overwrite: true
+          file_glob: true
